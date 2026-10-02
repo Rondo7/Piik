@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <dwmapi.h>
 #include <mmdeviceapi.h>
+#include <audiopolicy.h>
 #include <functiondiscoverykeys_devpkey.h>
 #include <shellapi.h>
 #include <d3d11.h>
@@ -959,11 +960,101 @@ int WriteMicrophoneList() {
   return result;
 }
 
+int WriteAudioProcessList() {
+  if (FAILED(CoInitializeEx(nullptr, COINIT_MULTITHREADED))) return 2;
+  const int result = []() {
+    ComPtr<IMMDeviceEnumerator> enumerator;
+    if (FAILED(CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, IID_PPV_ARGS(&enumerator)))) return 2;
+    ComPtr<IMMDevice> device;
+    if (FAILED(enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device))) return 2;
+    ComPtr<IAudioSessionManager2> sessionManager;
+    if (FAILED(device->Activate(__uuidof(IAudioSessionManager2), CLSCTX_ALL, nullptr, reinterpret_cast<void**>(sessionManager.GetAddressOf())))) return 2;
+    ComPtr<IAudioSessionEnumerator> sessionEnumerator;
+    if (FAILED(sessionManager->GetSessionEnumerator(&sessionEnumerator))) return 2;
+    int sessionCount = 0;
+    if (FAILED(sessionEnumerator->GetCount(&sessionCount))) return 2;
+
+    std::vector<DWORD> seenPids;
+    std::cout << '[';
+    bool first = true;
+    for (int i = 0; i < sessionCount && seenPids.size() < 256; ++i) {
+      ComPtr<IAudioSessionControl> control;
+      if (FAILED(sessionEnumerator->GetSession(i, &control))) continue;
+      ComPtr<IAudioSessionControl2> control2;
+      if (FAILED(control.As(&control2))) continue;
+      DWORD pid = 0;
+      if (FAILED(control2->GetProcessId(&pid)) || pid == 0) continue;
+      if (pid == GetCurrentProcessId()) continue;
+      if (std::find(seenPids.begin(), seenPids.end(), pid) != seenPids.end()) continue;
+      seenPids.push_back(pid);
+
+      std::string exeName;
+      HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+      if (process != nullptr) {
+        WCHAR pathBuffer[MAX_PATH] = {0};
+        DWORD size = MAX_PATH;
+        if (QueryFullProcessImageNameW(process, 0, pathBuffer, &size)) {
+          const WCHAR* fileName = wcsrchr(pathBuffer, L'\\');
+          exeName = Utf8(fileName ? fileName + 1 : pathBuffer);
+        }
+        CloseHandle(process);
+      }
+      if (exeName.empty()) {
+        LPWSTR displayName = nullptr;
+        if (SUCCEEDED(control2->GetDisplayName(&displayName)) && displayName != nullptr && displayName[0] != L'\0') {
+          exeName = Utf8(displayName);
+          CoTaskMemFree(displayName);
+        }
+      }
+      if (exeName.empty()) {
+        exeName = "Process " + std::to_string(pid);
+      }
+
+      struct WindowFind {
+        DWORD targetPid;
+        std::string foundTitle;
+      } finder{pid, {}};
+      EnumWindows([](HWND hwnd, LPARAM lParam) -> BOOL {
+        auto* f = reinterpret_cast<WindowFind*>(lParam);
+        DWORD wpid = 0;
+        GetWindowThreadProcessId(hwnd, &wpid);
+        if (wpid == f->targetPid && IsWindowVisible(hwnd)) {
+          int len = GetWindowTextLengthW(hwnd);
+          if (len > 0 && len <= 512) {
+            std::wstring wtitle(static_cast<size_t>(len) + 1, L'\0');
+            int copied = GetWindowTextW(hwnd, wtitle.data(), len + 1);
+            if (copied > 0) {
+              wtitle.resize(static_cast<size_t>(copied));
+              f->foundTitle = Utf8(wtitle);
+              return FALSE;
+            }
+          }
+        }
+        return TRUE;
+      }, reinterpret_cast<LPARAM>(&finder));
+
+      if (!first) std::cout << ',';
+      first = false;
+      std::cout << "{\"pid\":" << pid << ",\"name\":" << JsonString(exeName);
+      if (!finder.foundTitle.empty()) {
+        std::cout << ",\"title\":" << JsonString(finder.foundTitle);
+      }
+      std::cout << '}';
+    }
+    std::cout << ']';
+    return std::cout.good() ? 0 : 2;
+  }();
+  CoUninitialize();
+  return result;
+}
+
 int WriteSourceList() {
   std::vector<SourceTarget> targets;
+  SetLastError(ERROR_SUCCESS);
   if (!EnumDisplayMonitors(nullptr, nullptr, CollectDisplay,
                            reinterpret_cast<LPARAM>(&targets)) ||
-      !EnumWindows(CollectWindow, reinterpret_cast<LPARAM>(&targets))) {
+      (!EnumWindows(CollectWindow, reinterpret_cast<LPARAM>(&targets)) &&
+       GetLastError() != ERROR_SUCCESS)) {
     return 2;
   }
   std::stable_sort(targets.begin(), targets.end(),

@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <functional>
 #include <string>
+#include <vector>
 
 namespace piik::capture {
 
@@ -32,5 +33,10 @@ HRESULT CaptureProcessAudio(DWORD pid, UINT64 expected_creation_time,
 HRESULT CaptureSystemAudio(HANDLE stop_event, const StopProbe& stop_probe,
                            const ReadyWriter& ready_writer,
                            const PCMWriter& writer);
+HRESULT CaptureSystemAudioWithExclusions(
+    const std::vector<DWORD>& excluded_pids,
+    HANDLE stop_event, const StopProbe& stop_probe,
+    const ReadyWriter& ready_writer,
+    const PCMWriter& writer);
 
 }  // namespace piik::capture

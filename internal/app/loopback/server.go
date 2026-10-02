@@ -75,6 +75,7 @@ type NativeMediaCapabilities struct {
 	Microphone           bool `json:"microphone,omitempty"`
 	ProcessAudio         bool `json:"processAudio"`
 	SystemAudio          bool `json:"systemAudio"`
+	AudioProcessControl  bool `json:"audioProcessControl,omitempty"`
 	HardwareH264         bool `json:"hardwareH264"`
 	SoftwareVP8          bool `json:"softwareVP8"`
 }

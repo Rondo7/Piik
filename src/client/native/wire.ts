@@ -39,6 +39,7 @@ export const nativeHealthSchema = nativeDiscoveryIdentitySchema.extend({
       microphone: z.boolean().default(false),
       // API availability, not Windows approval or observed border visibility.
       captureBorderControl: z.boolean().default(false),
+      audioProcessControl: z.boolean().default(false),
       hardwareH264: z.boolean().default(false),
       softwareVP8: z.boolean().default(false),
     })
@@ -145,6 +146,22 @@ export const microphoneListResponseSchema = z.object({
   ...responseBase, type: z.literal("microphone-list"),
   devices: z.array(z.object({ id: z.string().min(1).max(512), label: z.string().min(1).max(512) }).strict()).max(64),
 }).strict();
+const nativeAudioProcessSchema = z
+  .object({
+    pid: z.number().int().positive().max(0xffff_ffff),
+    name: z.string().min(1).max(512),
+    title: z.string().max(512).optional(),
+  })
+  .strict();
+export type NativeAudioProcess = z.infer<typeof nativeAudioProcessSchema>;
+
+export const audioProcessListResponseSchema = z
+  .object({
+    ...responseBase,
+    type: z.literal("audio-process-list"),
+    processes: z.array(nativeAudioProcessSchema).max(256),
+  })
+  .strict();
 export const sourcePreviewResponseSchema = z
   .object({
     ...responseBase,
@@ -234,6 +251,7 @@ export const nativeAckResponseSchema = z
       "share-stopped",
       "share-paused",
       "microphone-set",
+      "audio-process-exclusions-set",
       "publication-answer-accepted",
       "publication-candidate-accepted",
       "publication-layers-accepted",

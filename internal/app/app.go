@@ -627,6 +627,7 @@ func discoverNativeMedia(ctx context.Context, configuredPath string) nativeRunti
 			Microphone:           summary.Microphone,
 			ProcessAudio:         summary.ProcessAudio,
 			SystemAudio:          summary.SystemAudio,
+			AudioProcessControl:  summary.AudioProcessControl,
 			HardwareH264:         summary.HardwareH264,
 			SoftwareVP8:          summary.SoftwareVP8,
 		},

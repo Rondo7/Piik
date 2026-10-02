@@ -50,6 +50,7 @@ type Capabilities struct {
 	Microphone           bool      `json:"microphone,omitempty"`
 	ProcessAudio         bool      `json:"processAudio"`
 	SystemAudio          bool      `json:"systemAudio"`
+	AudioProcessControl  bool      `json:"audioProcessControl,omitempty"`
 	SoftwareVP8          bool      `json:"softwareVP8"`
 	Adapters             []Adapter `json:"adapters"`
 }
@@ -60,6 +61,7 @@ type Summary struct {
 	Microphone           bool
 	ProcessAudio         bool
 	SystemAudio          bool
+	AudioProcessControl  bool
 	HardwareH264         bool
 	SoftwareVP8          bool
 }
@@ -71,6 +73,7 @@ func (capabilities Capabilities) Summary() Summary {
 		Microphone:           capabilities.Microphone,
 		ProcessAudio:         capabilities.ProcessAudio,
 		SystemAudio:          capabilities.SystemAudio,
+		AudioProcessControl:  capabilities.AudioProcessControl,
 		SoftwareVP8:          capabilities.SoftwareVP8,
 	}
 	for _, adapter := range capabilities.Adapters {

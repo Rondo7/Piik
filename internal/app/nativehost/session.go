@@ -62,27 +62,29 @@ type Event struct {
 }
 
 type Options struct {
-	ShareID          string
-	CaptureProcess   string
-	Video            nativecapture.VideoOptions
-	Profile          QualityProfile
-	AudioEnabled     bool
-	MicrophoneMixing bool
-	EdgeCapacity     int
-	BindAddress      string
-	PortMapping      bool
-	Events           func(context.Context, Event)
+	ShareID           string
+	CaptureProcess    string
+	Video             nativecapture.VideoOptions
+	Profile           QualityProfile
+	AudioEnabled      bool
+	MicrophoneMixing  bool
+	ExcludedAudioPIDs []uint32
+	EdgeCapacity      int
+	BindAddress       string
+	PortMapping       bool
+	Events            func(context.Context, Event)
 }
 
 type Session struct {
-	shareID        string
-	captureProcess string
-	videoOptions   nativecapture.VideoOptions
-	profile        QualityProfile
-	edgeCapacity   int
-	stream         *nativecapture.Stream
-	audioStream    *nativecapture.Stream
-	engine         *mediaedge.Engine
+	shareID           string
+	captureProcess    string
+	videoOptions      nativecapture.VideoOptions
+	excludedAudioPIDs []uint32
+	profile           QualityProfile
+	edgeCapacity      int
+	stream            *nativecapture.Stream
+	audioStream       *nativecapture.Stream
+	engine            *mediaedge.Engine
 	source         *mediaedge.Source
 	audioSource    *mediaedge.AudioSource
 	mixer          *audioMix
@@ -138,6 +140,7 @@ func Start(parent context.Context, options Options) (*Session, error) {
 			parent,
 			options.CaptureProcess,
 			options.Video.Target,
+			options.ExcludedAudioPIDs,
 		)
 		if audioErr != nil {
 			slog.DebugContext(parent, "piik-client", "event", "capture-audio-unavailable", "share", diagnostics.ID(options.ShareID), diagnostics.Error(audioErr))
@@ -145,13 +148,14 @@ func Start(parent context.Context, options Options) (*Session, error) {
 	}
 	ctx, cancel := context.WithCancel(parent)
 	session := &Session{
-		shareID:        options.ShareID,
-		captureProcess: options.CaptureProcess,
-		videoOptions:   options.Video,
-		profile:        options.Profile,
-		edgeCapacity:   options.EdgeCapacity,
-		stream:         stream,
-		audioStream:    audioStream,
+		shareID:           options.ShareID,
+		captureProcess:    options.CaptureProcess,
+		videoOptions:      options.Video,
+		excludedAudioPIDs: append([]uint32(nil), options.ExcludedAudioPIDs...),
+		profile:           options.Profile,
+		edgeCapacity:      options.EdgeCapacity,
+		stream:            stream,
+		audioStream:       audioStream,
 		engine:         engine,
 		events:         options.Events,
 		ctx:            ctx,
@@ -428,10 +432,14 @@ func (session *Session) ReplaceSource(
 	}
 	var replacementAudio *nativecapture.Stream
 	if audioEnabled {
+		session.mu.Lock()
+		excludedPIDs := append([]uint32(nil), session.excludedAudioPIDs...)
+		session.mu.Unlock()
 		replacementAudio, err = startAudioCapture(
 			session.ctx,
 			session.captureProcess,
 			options.Target,
+			excludedPIDs,
 		)
 		if err != nil {
 			_ = replacement.Close()
@@ -452,8 +460,12 @@ func startAudioCapture(
 	ctx context.Context,
 	captureProcess string,
 	target nativecapture.CaptureTarget,
+	excludedPIDs []uint32,
 ) (*nativecapture.Stream, error) {
 	if target.Kind == "display" || target.Kind == "picker" {
+		if len(excludedPIDs) > 0 {
+			return nativecapture.StartSystemAudioWithExclusions(ctx, captureProcess, excludedPIDs)
+		}
 		return nativecapture.StartSystemAudio(ctx, captureProcess)
 	}
 	return nativecapture.StartAudio(ctx, captureProcess, target)
@@ -1204,4 +1216,41 @@ func (session *Session) SetMicrophone(enabled *bool, gain *float64, deviceID *st
 		return errors.New("native microphone is unavailable")
 	}
 	return session.mixer.setMicrophone(session.captureProcess, enabled, gain, deviceID)
+}
+
+func (session *Session) SetExcludedAudioPIDs(excludedPIDs []uint32) error {
+	session.mu.Lock()
+	if session.closed || session.ctx.Err() != nil {
+		session.mu.Unlock()
+		return errors.New("native share is unavailable")
+	}
+	session.excludedAudioPIDs = append([]uint32(nil), excludedPIDs...)
+	captureProcess := session.captureProcess
+	target := session.videoOptions.Target
+	ctx := session.ctx
+	hasMixer := session.mixer != nil
+	session.mu.Unlock()
+
+	if !hasMixer || (target.Kind != "display" && target.Kind != "picker") {
+		return nil
+	}
+	replacementAudio, err := startAudioCapture(ctx, captureProcess, target, excludedPIDs)
+	if err != nil {
+		return err
+	}
+	session.mu.Lock()
+	if session.closed || session.ctx.Err() != nil {
+		session.mu.Unlock()
+		_ = replacementAudio.Close()
+		return errors.New("native share is unavailable")
+	}
+	oldAudio := session.audioStream
+	session.audioStream = replacementAudio
+	session.mu.Unlock()
+
+	session.mixer.setSource(replacementAudio)
+	if oldAudio != nil {
+		_ = oldAudio.Close()
+	}
+	return nil
 }

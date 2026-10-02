@@ -136,6 +136,22 @@ func (session *Session) Handle(ctx context.Context, payload []byte) (result any,
 			responseEnvelope
 			Devices []nativecapture.Microphone `json:"devices"`
 		}{response(envelope, "microphone-list"), devices}, nil
+	case "list-audio-processes":
+		var request requestEnvelope
+		if err := decodeStrict(payload, &request); err != nil {
+			return nil, protocolViolation("native audio process list request is invalid")
+		}
+		if !session.capabilities.AudioProcessControl {
+			return operationFailure(envelope, errors.New("native audio process control is unavailable")), nil
+		}
+		processes, err := nativecapture.ListAudioProcesses(ctx, session.captureProcess)
+		if err != nil {
+			return operationFailure(envelope, err), nil
+		}
+		return struct {
+			responseEnvelope
+			Processes []nativecapture.AudioProcess `json:"processes"`
+		}{response(envelope, "audio-process-list"), processes}, nil
 	case "list-sources":
 		var request listSourcesRequest
 		if err := decodeStrict(payload, &request); err != nil || request.Type != envelope.Type {
@@ -213,6 +229,21 @@ func (session *Session) Handle(ctx context.Context, payload []byte) (result any,
 		result = session.runHostOperation(host, envelope, func() (any, error) {
 			err := host.SetMicrophone(request.Enabled, nil, request.DeviceID)
 			return response(envelope, "microphone-set"), err
+		}, complete)
+		asynchronous = result == nil
+		return result, nil
+	case "set-excluded-audio-pids":
+		var request setExcludedAudioPIDsRequest
+		if err := decodeStrict(payload, &request); err != nil || !validIdentities(request.ShareID) {
+			return nil, protocolViolation("native set-excluded-audio-pids request is invalid")
+		}
+		host := session.current(request.ShareID)
+		if host == nil {
+			return nil, errors.New("native share does not exist")
+		}
+		result = session.runHostOperation(host, envelope, func() (any, error) {
+			err := host.SetExcludedAudioPIDs(request.ExcludedAudioPIDs)
+			return response(envelope, "audio-process-exclusions-set"), err
 		}, complete)
 		asynchronous = result == nil
 		return result, nil
@@ -571,6 +602,7 @@ func (session *Session) startShare(
 			Profile:           profile.Video,
 		},
 		MicrophoneMixing: request.MicrophoneMixing && session.capabilities.Microphone,
+		ExcludedAudioPIDs: request.ExcludedAudioPIDs,
 		Profile:          profile,
 		EdgeCapacity:     request.EdgeCapacity,
 		AudioEnabled: request.Audio && session.capabilities.Summary().AudioFor(

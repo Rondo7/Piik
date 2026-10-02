@@ -55,6 +55,13 @@ type startShareRequest struct {
 	EdgeCapacity      int                         `json:"edgeCapacity"`
 	Profile           qualitySettings             `json:"profile"`
 	Codec             string                      `json:"codec"`
+	ExcludedAudioPIDs []uint32                    `json:"excludedAudioPids,omitempty"`
+}
+
+type setExcludedAudioPIDsRequest struct {
+	requestEnvelope
+	ShareID           string   `json:"shareId"`
+	ExcludedAudioPIDs []uint32 `json:"excludedAudioPids"`
 }
 
 type microphoneRequest struct {

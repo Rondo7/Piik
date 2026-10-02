@@ -63,8 +63,8 @@ function fixture(launchedByClient = true) {
     startShare: vi.fn(async (): Promise<{ audio: boolean; codec: "h264" }> => ({ audio: false, codec: "h264" })),
     onEvent: vi.fn((_listener: (event: unknown) => void) => () => undefined),
     close: vi.fn(), onClose: vi.fn(() => () => undefined),
-    health: { nativeMedia: { video: true, hardwareH264: true, softwareVP8: true } },
-    captureOptions: vi.fn(async () => []), sources: vi.fn(async () => []),
+    health: { nativeMedia: { video: true, hardwareH264: true, softwareVP8: true, audioProcessControl: false } },
+    captureOptions: vi.fn(async () => []), sources: vi.fn(async () => []), audioProcesses: vi.fn(async () => []),
     stopReceive: vi.fn(async () => undefined), stopShare: vi.fn(async () => undefined) };
   const route = { updateProfile: vi.fn(async () => true), resyncAuthoritative: vi.fn(async (): Promise<void> => undefined) };
   const state = {
@@ -77,7 +77,7 @@ function fixture(launchedByClient = true) {
     nativeClientCloseCleanupRef: ref<(() => void) | null>(null),
     sourcePickerReturnRef: ref<{ id: string; restore: boolean } | null>(null),
     nativeSourceRequestRef: ref<object | null>(null), nativeSourcePathRef: ref<unknown>(null),
-    setNativeSources: vi.fn(), setShowCaptureBorder: vi.fn(), defaultNativeCapturePath: () => ({ adapterIndex: 0, encoderIndex: 0 }),
+    setNativeSources: vi.fn(), setShowCaptureBorder: vi.fn(), setAudioProcesses: vi.fn(), setExcludedAudioPids: vi.fn(), defaultNativeCapturePath: () => ({ adapterIndex: 0, encoderIndex: 0 }),
     roomMutationRef: ref<object | null>(null), setRoomMutation: vi.fn(),
     generationRef: ref(0), shareGenerationRef: ref<string | null>("share"), createOpaqueId: () => "share",
     setCopiedRoomLink: vi.fn(), setPhase: vi.fn(), roomInitializationRef: ref(Promise.resolve()), roomRef: ref(null),

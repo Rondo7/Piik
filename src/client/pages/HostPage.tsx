@@ -28,6 +28,7 @@ import { WelcomeLine } from "../components/living/WelcomeLine";
 import { Couch, type CouchEntry } from "../components/living/Couch";
 import { SharingSettings } from "../components/living/SharingSettings";
 import { HostMicrophone, HostMicrophoneSettings } from "../components/living/HostMicrophone";
+import { HostAudioProcesses } from "../components/living/HostAudioProcesses";
 import { HostAudio } from "../media/host-audio";
 import {
   CaptureSourcePicker,
@@ -170,7 +171,7 @@ import {
   defaultNativeCapturePath,
   type NativeCapturePath,
 } from "../native/capture-selection";
-import type { NativeCaptureTarget } from "../native/wire";
+import type { NativeAudioProcess, NativeCaptureTarget } from "../native/wire";
 import {
   MAX_ENDPOINT_MEDIA_CHILDREN,
   reconcileBoundedMediaChildren,
@@ -346,6 +347,7 @@ type ShareSourceSelection =
       audio: boolean;
       showCaptureBorder: boolean;
       path: NativeCapturePath;
+      excludedAudioPids?: number[];
     };
 
 export function HostPage({
@@ -391,6 +393,51 @@ export function HostPage({
   }, []);
   const [nativeActive, setNativeActive] = useState(false);
   const [showCaptureBorder, setShowCaptureBorder] = useState(false);
+  const [excludedAudioPids, setExcludedAudioPids] = useState<number[]>([]);
+  const [audioProcesses, setAudioProcesses] = useState<NativeAudioProcess[]>([]);
+  const [audioProcessesRefreshing, setAudioProcessesRefreshing] = useState(false);
+
+  const refreshAudioProcesses = useCallback(async () => {
+    const client = nativeClientRef.current;
+    if (!client || !client.health.nativeMedia.audioProcessControl) return;
+    setAudioProcessesRefreshing(true);
+    try {
+      const processes = await client.audioProcesses();
+      setAudioProcesses(processes);
+      setNativeSources((current) =>
+        current && current.kind === "ready"
+          ? { ...current, audioProcesses: processes }
+          : current,
+      );
+    } catch (err) {
+      debugError("capture", "refresh-audio-processes-failed", err);
+    } finally {
+      setAudioProcessesRefreshing(false);
+    }
+  }, []);
+
+  const toggleLiveExcludedAudioPid = async (pid: number) => {
+    const next = excludedAudioPids.includes(pid)
+      ? excludedAudioPids.filter((p) => p !== pid)
+      : [...excludedAudioPids, pid];
+    setExcludedAudioPids(next);
+    const client = nativeClientRef.current;
+    const shareId = nativeShareGenerationRef.current;
+    if (client && shareId && nativeModeRef.current) {
+      try {
+        await client.setExcludedAudioPids(shareId, next);
+      } catch (err) {
+        debugError("capture", "set-excluded-audio-pids-failed", err);
+      }
+    }
+  };
+
+  useEffect(() => {
+    if (phase === "live" && nativeActive && nativeClientRef.current?.health.nativeMedia.audioProcessControl) {
+      void refreshAudioProcesses();
+    }
+  }, [phase, nativeActive, refreshAudioProcesses]);
+
   const [nativeSources, setNativeSources] =
     useState<NativeSourceList | null>(null);
   const sourcePickerReturnRef = useRef<{ id: string; restore: boolean } | null>(null);
@@ -1156,7 +1203,7 @@ export function HostPage({
     shareGeneration: string,
     selection: Extract<ShareSourceSelection, { kind: "native" }>,
   ): Promise<MediaStream | null> {
-    const { client, target, audio, showCaptureBorder, path } = selection;
+    const { client, target, audio, showCaptureBorder, path, excludedAudioPids } = selection;
     let bridge: NativeMediaBridge | null = null;
     let shareStarted = false;
     let nativeEventCleanup: (() => void) | null = null;
@@ -1209,6 +1256,7 @@ export function HostPage({
         edgeCapacity: MAX_ENDPOINT_MEDIA_CHILDREN,
         profile: qualitySettingsRef.current,
         codec: videoCodecModeRef.current,
+        excludedAudioPids,
       });
       shareStarted = true;
       if (!isCurrentShare(generation, shareGeneration)) {
@@ -1368,9 +1416,12 @@ export function HostPage({
       return;
     }
     try {
-      const [adapters, sources] = await Promise.all([
+      const [adapters, sources, processes] = await Promise.all([
         client.captureOptions(),
         client.sources(),
+        client.health.nativeMedia.audioProcessControl
+          ? client.audioProcesses().catch(() => [])
+          : Promise.resolve([]),
       ]);
       const codec = nativeModeRef.current ? videoCodecRef.current.primary : videoCodecModeRef.current;
       const path = defaultNativeCapturePath(
@@ -1387,12 +1438,15 @@ export function HostPage({
         return;
       }
       nativeSourcePathRef.current = path;
+      setAudioProcesses(processes);
       setNativeSources({
         kind: "ready",
         sources,
         processAudio: client.health.nativeMedia.processAudio,
         systemAudio: client.health.nativeMedia.systemAudio,
         captureBorderControl: client.health.nativeMedia.captureBorderControl,
+        audioProcessControl: client.health.nativeMedia.audioProcessControl,
+        audioProcesses: processes,
       });
     } catch (error) {
       if (nativeSourceRequestRef.current !== request || nativeClientRef.current !== client) return;
@@ -1484,17 +1538,19 @@ export function HostPage({
     target: NativeCaptureTarget,
     audio: boolean,
     showCaptureBorder: boolean,
+    excludedAudioPids?: number[],
   ): void {
     if (nativeSources?.kind !== "ready") return;
     const client = nativeClientRef.current;
     const path = nativeSourcePathRef.current;
     if (!client || !path) return;
     setShowCaptureBorder(showCaptureBorder);
+    setExcludedAudioPids(excludedAudioPids ?? []);
     if (phase === "live" && nativeModeRef.current) {
       void switchNativeSource(client, target, audio, path, showCaptureBorder);
       return;
     }
-    void startSharing({ kind: "native", client, target, audio, showCaptureBorder, path });
+    void startSharing({ kind: "native", client, target, audio, showCaptureBorder, path, excludedAudioPids });
   }
 
   function disposeNativeShare(expectedShare = nativeShareGenerationRef.current): void {
@@ -3465,6 +3521,9 @@ export function HostPage({
                 }
                 audioLocked={nativeActive && !nativeClientRef.current?.health.nativeMedia.microphone}
                 initialShowCaptureBorder={showCaptureBorder}
+                onRefreshAudioProcesses={refreshAudioProcesses}
+                refreshingAudioProcesses={audioProcessesRefreshing}
+                initialExcludedAudioPids={excludedAudioPids}
               />
             ) : !stream &&
               (phase === "idle" || phase === "ended" || phase === "error") ? (
@@ -3792,6 +3851,16 @@ export function HostPage({
                   native={nativeActive} loadDevices={loadMicrophones}
                   deviceId={microphoneDevices[nativeActive ? "native" : "browser"]}
                   onDevice={deviceId => void changeMicrophone(microphoneEnabled, deviceId)}
+                />
+              ) : null}
+              {phase === "live" && nativeActive && nativeClientRef.current?.health.nativeMedia.audioProcessControl ? (
+                <HostAudioProcesses
+                  processes={audioProcesses}
+                  excludedPids={excludedAudioPids}
+                  onToggleExclude={toggleLiveExcludedAudioPid}
+                  onRefresh={refreshAudioProcesses}
+                  refreshing={audioProcessesRefreshing}
+                  disabled={switchingSource || changingQuality || sharingPaused}
                 />
               ) : null}
               <div className="lr-door-group">

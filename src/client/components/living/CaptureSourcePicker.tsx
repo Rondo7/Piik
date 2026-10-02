@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState } from "react";
 
-import type { NativeCaptureTarget } from "../../native/wire";
+import type { NativeAudioProcess, NativeCaptureTarget } from "../../native/wire";
 import { nativeCaptureTargetKey } from "../../native/capture-selection";
 import { useCopy } from "../../ui/copy";
 import { Glyph, type GlyphName } from "../../ui/icons";
@@ -9,6 +9,7 @@ import { HintComic } from "./hints";
 import { Pill } from "./primitives";
 import { CameraSources, useCameraSources } from "./CameraSources";
 import { CaptureSourceCard } from "./CaptureSourceCard";
+import { HostAudioProcesses } from "./HostAudioProcesses";
 import type { loadCameraPreviews } from "../../media/camera-previews";
 
 const SOURCE_TABS = ["browser", "camera", "window", "display"] as const;
@@ -33,6 +34,8 @@ export type NativeSourceList =
       processAudio: boolean;
       systemAudio: boolean;
       captureBorderControl?: boolean;
+      audioProcessControl?: boolean;
+      audioProcesses?: NativeAudioProcess[];
     };
 
 export function CaptureSourcePicker({
@@ -43,6 +46,8 @@ export function CaptureSourcePicker({
   onPreview,
   onRefresh,
   onCancel,
+  onRefreshAudioProcesses,
+  refreshingAudioProcesses = false,
   browserAvailable = true,
   cameraAvailable = !!onCamera,
   initialTab = "window",
@@ -51,6 +56,7 @@ export function CaptureSourcePicker({
   loadCameras,
   initialAudio = true,
   initialShowCaptureBorder = false,
+  initialExcludedAudioPids = [],
   audioLocked = false,
   selectionDisabled = false,
 }: {
@@ -60,18 +66,26 @@ export function CaptureSourcePicker({
   initialCamera?: string;
   activeCameraVideo?: HTMLVideoElement | null;
   loadCameras?: typeof loadCameraPreviews;
-  onNative: (target: NativeCaptureTarget, audio: boolean, showCaptureBorder: boolean) => void;
+  onNative: (
+    target: NativeCaptureTarget,
+    audio: boolean,
+    showCaptureBorder: boolean,
+    excludedAudioPids?: number[],
+  ) => void;
   onPreview: (
     target: NativeCaptureTarget,
     signal?: AbortSignal,
   ) => Promise<string | null>;
   onRefresh: () => void;
   onCancel: () => void;
+  onRefreshAudioProcesses?: () => void;
+  refreshingAudioProcesses?: boolean;
   browserAvailable?: boolean;
   cameraAvailable?: boolean;
   initialTab?: SourceTab;
   initialAudio?: boolean;
   initialShowCaptureBorder?: boolean;
+  initialExcludedAudioPids?: number[];
   audioLocked?: boolean;
   selectionDisabled?: boolean;
 }) {
@@ -81,6 +95,12 @@ export function CaptureSourcePicker({
   const [tab, setTab] = useState<SourceTab | null>(null);
   const [shareAudio, setShareAudio] = useState(initialAudio);
   const [showCaptureBorder, setShowCaptureBorder] = useState(initialShowCaptureBorder);
+  const [excludedAudioPids, setExcludedAudioPids] = useState<number[]>(initialExcludedAudioPids);
+  const toggleExcludedAudioPid = (pid: number) => {
+    setExcludedAudioPids((current) =>
+      current.includes(pid) ? current.filter((p) => p !== pid) : [...current, pid],
+    );
+  };
   const appDetected = nativeSources.kind === "ready" || nativeSources.kind === "failed" ||
     nativeSources.kind === "unsupported" || nativeSources.kind === "incompatible";
   const tabs = SOURCE_TABS.filter((value) => appDetected || value === "browser" || value === "camera");
@@ -304,8 +324,14 @@ export function CaptureSourcePicker({
                     }
                     onPreview={onPreview}
                     onSelect={() =>
-                      onNative(target, shareAudio && supportsAudio(target),
-                        supportsCaptureBorder && showCaptureBorder)
+                      onNative(
+                        target,
+                        shareAudio && supportsAudio(target),
+                        supportsCaptureBorder && showCaptureBorder,
+                        target.kind === "display" && nativeSources.kind === "ready" && nativeSources.audioProcessControl
+                          ? excludedAudioPids
+                          : undefined,
+                      )
                     }
                   />
                 ))
@@ -353,6 +379,21 @@ export function CaptureSourcePicker({
                 </div>
               ) : null}
             </div>
+          ) : null}
+
+          {activeTab === "display" &&
+          shareAudio &&
+          nativeSources.kind === "ready" &&
+          nativeSources.audioProcessControl ? (
+            <HostAudioProcesses
+              collapsible
+              processes={nativeSources.audioProcesses ?? []}
+              excludedPids={excludedAudioPids}
+              onToggleExclude={toggleExcludedAudioPid}
+              onRefresh={onRefreshAudioProcesses}
+              refreshing={refreshingAudioProcesses}
+              disabled={selectionDisabled}
+            />
           ) : null}
 
           {issueKey ? (

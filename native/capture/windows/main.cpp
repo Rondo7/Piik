@@ -920,10 +920,11 @@ piik::capture::TargetKind ParseTargetKind(const wchar_t* value) {
 }
 
 struct ProductArguments final {
-  enum class Mode { list, microphones, probe, preview, audio, microphone, video, encoded } mode = Mode::list;
+  enum class Mode { list, microphones, audio_processes, probe, preview, audio, microphone, video, encoded } mode = Mode::list;
   piik::capture::TargetKind target_kind =
       piik::capture::TargetKind::window;
   std::wstring microphone_device;
+  std::vector<DWORD> excluded_pids;
   DWORD pid = 0;
   UINT64 creation_time = 0;
   UINT64 source_id = 0;
@@ -1010,6 +1011,10 @@ ProductArguments ParseProductArguments(int count, wchar_t** values) {
     arguments.mode = ProductArguments::Mode::microphones;
     return arguments;
   }
+  if (count == 2 && std::wstring(values[1]) == L"--list-audio-processes") {
+    arguments.mode = ProductArguments::Mode::audio_processes;
+    return arguments;
+  }
   if ((count == 2 || (count == 4 && std::wstring(values[2]) == L"--device")) && std::wstring(values[1]) == L"--capture-microphone") {
     if (count == 4) {
       arguments.microphone_device = values[3];
@@ -1018,9 +1023,20 @@ ProductArguments ParseProductArguments(int count, wchar_t** values) {
     arguments.mode = ProductArguments::Mode::microphone;
     return arguments;
   }
-  if (count == 5 && std::wstring(values[1]) == L"--capture-audio") {
+  if ((count == 5 || (count == 7 && std::wstring(values[5]) == L"--exclude-pids")) &&
+      std::wstring(values[1]) == L"--capture-audio") {
     arguments.mode = ProductArguments::Mode::audio;
     arguments.target_kind = ParseTargetKind(values[2]);
+    if (count == 7) {
+      std::wstring pids_str = values[6];
+      std::wstringstream ss(pids_str);
+      std::wstring item;
+      while (std::getline(ss, item, L',')) {
+        if (!item.empty()) {
+          arguments.excluded_pids.push_back(static_cast<DWORD>(ParseNonNegativeUint64(item.c_str(), "argument-exclude-pid")));
+        }
+      }
+    }
   } else if (count >= 16 && count <= 11 + 5 * piik::capture::kMaxOutputs && (count - 11) % 5 == 0 &&
              std::wstring(values[1]) == L"--encoded-video" &&
              std::wstring(values[2]) == L"--codec" &&
@@ -1122,6 +1138,10 @@ HRESULT RunAudioCapture(const ProductArguments& arguments) {
     return piik::capture::CaptureMicrophone(arguments.microphone_device, stop.get(), should_stop, ready, pcm);
   }
   if (arguments.target_kind == piik::capture::TargetKind::display) {
+    if (!arguments.excluded_pids.empty()) {
+      return piik::capture::CaptureSystemAudioWithExclusions(
+          arguments.excluded_pids, stop.get(), should_stop, ready, pcm);
+    }
     return piik::capture::CaptureSystemAudio(
         stop.get(), should_stop, ready, pcm);
   }
@@ -1179,6 +1199,8 @@ void WriteCapabilityProbe() {
          << ",\"processAudio\":"
          << (process_audio ? "true" : "false")
          << ",\"systemAudio\":" << (system_audio ? "true" : "false")
+         << ",\"audioProcessControl\":"
+         << (system_audio ? "true" : "false")
          << ",\"adapters\":[";
   for (size_t adapter_index = 0; adapter_index < adapters.size();
        ++adapter_index) {
@@ -2136,6 +2158,7 @@ int wmain(int argc, wchar_t** argv) {
   try {
     ProductArguments arguments = ParseProductArguments(argc, argv);
     if (arguments.mode == ProductArguments::Mode::microphones) return piik::capture::WriteMicrophoneList();
+    if (arguments.mode == ProductArguments::Mode::audio_processes) return piik::capture::WriteAudioProcessList();
     if (arguments.mode == ProductArguments::Mode::list) {
       return piik::capture::WriteSourceList();
     }

@@ -33,8 +33,10 @@ import {
   shareUpdatedResponseSchema,
   sourceListResponseSchema,
   microphoneListResponseSchema,
+  audioProcessListResponseSchema,
   sourcePreviewResponseSchema,
   type NativeAdapter,
+  type NativeAudioProcess,
   type NativeClientEvent,
   type NativeHealth,
   type NativeCaptureTarget,
@@ -80,6 +82,7 @@ export interface NativeShareInput {
   edgeCapacity: number;
   profile: QualitySettings;
   codec: NativeVideoCodec | "auto";
+  excludedAudioPids?: number[];
 }
 
 export class NativeCompatibilityError extends Error {
@@ -281,13 +284,14 @@ export class NativeClient {
     input: NativeShareInput,
   ): Promise<{ audio: boolean; codec: NativeVideoCodec; sourceAudio?: boolean }> {
     // Older Apps reject unknown command fields.
-    const { showCaptureBorder = false, ...shareInput } = input;
+    const { showCaptureBorder = false, excludedAudioPids, ...shareInput } = input;
     const response = await this.request(
       "start-share",
       {
         ...shareInput,
         ...(this.health.nativeMedia.microphone ? { microphoneMixing: true } : {}),
         ...(this.health.nativeMedia.captureBorderControl ? { showCaptureBorder } : {}),
+        ...(this.health.nativeMedia.audioProcessControl && excludedAudioPids?.length ? { excludedAudioPids } : {}),
       },
       shareStartedResponseSchema,
       input.source.kind === "picker" ? null : REQUEST_TIMEOUT_MS,
@@ -611,6 +615,16 @@ export class NativeClient {
       } while (this.microphoneVolumeUpdate === update && !this.closed);
     })().finally(() => { if (this.microphoneVolumeUpdate === update) this.microphoneVolumeUpdate = null; });
     return update.done;
+  }
+
+  async audioProcesses(): Promise<NativeAudioProcess[]> {
+    if (!this.health.nativeMedia.audioProcessControl) throw new Error("Piik App audio process control is unavailable");
+    return (await this.request("list-audio-processes", {}, audioProcessListResponseSchema)).processes;
+  }
+
+  async setExcludedAudioPids(shareId: string, excludedAudioPids: number[]): Promise<void> {
+    if (!this.health.nativeMedia.audioProcessControl) throw new Error("Piik App audio process control is unavailable");
+    await this.request("set-excluded-audio-pids", { shareId, excludedAudioPids }, nativeAckResponseSchema);
   }
 
   async stopShare(shareId: string): Promise<void> {

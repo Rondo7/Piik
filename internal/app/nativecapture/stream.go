@@ -299,6 +299,19 @@ func StartSystemAudio(parent context.Context, executable string) (*Stream, error
 	})
 }
 
+func StartSystemAudioWithExclusions(parent context.Context, executable string, excludedPIDs []uint32) (*Stream, error) {
+	if len(excludedPIDs) == 0 {
+		return StartSystemAudio(parent, executable)
+	}
+	pids := make([]string, len(excludedPIDs))
+	for i, pid := range excludedPIDs {
+		pids[i] = strconv.FormatUint(uint64(pid), 10)
+	}
+	return startAudioStream(parent, executable, []string{
+		"--capture-audio", "display", "0", "0", "--exclude-pids", strings.Join(pids, ","),
+	})
+}
+
 func StartMicrophone(parent context.Context, executable, deviceID string) (*Stream, error) {
 	if !ValidDeviceID(deviceID) {
 		return nil, errors.New("microphone device is invalid")

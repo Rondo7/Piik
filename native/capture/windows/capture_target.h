@@ -10,6 +10,7 @@ enum class TargetKind { window, display };
 
 int WriteSourceList();
 int WriteMicrophoneList();
+int WriteAudioProcessList();
 HRESULT WriteSourcePreview(TargetKind kind, UINT64 source_id, DWORD pid,
                            UINT64 expected_creation_time);
 HRESULT ValidateProcessTarget(DWORD pid, UINT64 expected_creation_time);
